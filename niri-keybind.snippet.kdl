@@ -1,0 +1,3 @@
+// nautilus-zoxide-jump 键位片段
+// 用法: 将下面一行并入 ~/.config/niri/keybinds.kdl 的 binds { ... } 块
+Mod+Z { spawn "/home/lynncx/bin/shortcuts/nautilus-zoxide-toggle"; }
