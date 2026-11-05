@@ -7,11 +7,16 @@ goal     : 外部(rofi / niri Mod+Z)选好 zoxide 目录后，当前 nautilus �
            同时覆盖 nautilus 承载的 portal 文件选择器窗口(GNOME 50: 浏览器等
            触发的"选择文件/文件夹"弹窗就在 nautilus 进程内)，让它也能 z 式跳转。
 mechanism: 持有 DBus 名 dev.lynncx.zoxidejump；JumpTo(path) 选出最近聚焦的
-           目标窗口 —— 普通浏览窗口(NautilusWindow)用 active-slot 的 'location'
-           属性(GFile)赋值触发原地导航；文件选择器窗口(GtkFileChooser 系)则
-           深层定位 GtkFileChooserWidget 并调用 set_current_folder_file。
+           目标窗口 —— 普通浏览窗口(NautilusWindow)对其 active-slot 激活
+           slot 自带的 'slot.open-location' GAction(URI 参数)，走
+           nautilus_window_slot_open_location_full → begin_location_change
+           完整导航管线(重载视图、压前进/后退历史)；文件选择器窗口
+           (GtkFileChooser 系)经 NautilusSidebar/NautilusToolbar 的
+           window-slot 定位内嵌 slot 后激活同一 action。
+           注意：直接给 slot 的 'location' 属性赋值只会更新标题/历史按钮
+           (nautilus_window_slot_set_location)，主体区不刷新——旧版 bug 根因。
            HasWindows() 供外部脚本判断是否已有窗口；DebugList() 内省所有
-           顶层窗口(排障用)。
+           顶层窗口(排障用，含 slot.location / allow-stop / 网格子项数)。
 
 usage:
   本文件由 nautilus 自动加载，安装位置:
@@ -174,11 +179,26 @@ class _FocusCache:
 FOCUS = _FocusCache()
 
 
+def _slot_navigate(slot, gfile):
+    """激活 slot 自带的 'slot.open-location' GAction 触发完整导航管线。
+
+    nautilus_window_slot_init 把 slot_entries 注册的 action group 以 "slot"
+    前缀插在 slot widget 上(nautilus-window-slot.c 实证)；open-location 的
+    handler 调 nautilus_window_slot_open_location_full → begin_location_change，
+    会真正重载视图、更新前进/后退历史、同步路径栏。
+    陷阱一：直接赋 slot 的 'location' 属性只走 nautilus_window_slot_set_location，
+    仅刷新标题/历史按钮状态，主体区不刷新("导航栏变了列表不动"的旧 bug 根因)。
+    陷阱二：action handler 对新旧地址相同的情况 early-return，因此绝不能先
+    set_property('location') 再激活 action，否则一次导航都不会发生。
+    """
+    slot.activate_action('slot.open-location', GLib.Variant('s', gfile.get_uri()))
+
+
 def _jump_browse(w, gfile):
     slot = w.get_property('active-slot')
     if slot is None:
         return 'ERR: no active slot'
-    slot.set_property('location', gfile)
+    _slot_navigate(slot, gfile)
     return f'OK: {w.get_title()}'
 
 
@@ -186,8 +206,9 @@ def _jump_chooser(w, gfile):
     # NautilusFileChooser(nautilus 50 portal 选择器)：官方通道是侧栏/工具栏的
     # window-slot 属性——模板里 NautilusSidebar/NautilusToolbar 的 window-slot
     # 都 bind 到 slot_container.child，即 NautilusWindowSlot 实例(源码实证:
-    # nautilus_file_chooser.c constructed: adw_bin_set_child(slot_container, slot))。
-    # 直接向该 slot 的 location 属性赋值触发原地导航(与浏览窗口同机制)。
+    # nautilus_file_chooser.c constructed: adw_bin_set_child(slot_container, slot)
+    # ；743 行 self->slot = nautilus_window_slot_new(...))。内嵌 slot 与浏览窗口
+    # 同类，同样激活 'slot.open-location' 走完整导航管线。
     for helper_name in ('NautilusSidebar', 'NautilusToolbar'):
         helper = _find_first(w, helper_name)
         if helper is None:
@@ -196,18 +217,20 @@ def _jump_chooser(w, gfile):
             slot = helper.get_property('window-slot')
         except Exception:
             slot = None
-        if slot is not None and any(p.name == 'location' for p in slot.list_properties()):
+        if slot is not None:
             try:
-                slot.set_property('location', gfile)
+                _slot_navigate(slot, gfile)
                 return f'OK chooser(slot-via-{helper_name}): {w.get_title()}'
             except Exception as e:
                 return f'ERR slot-via-{helper_name}: {type(e).__name__}: {e}'
     slot = _find_first(w, 'NautilusWindowSlot')
-    if slot is not None and any(p.name == 'location' for p in slot.list_properties()):
-        slot.set_property('location', gfile)
+    if slot is not None:
+        _slot_navigate(slot, gfile)
         return f'OK chooser(slot): {w.get_title()}'
     cw = _find_first(w, 'GtkFileChooserWidget')
     if cw is not None:
+        # 纯 GTK 选择器兜底：set_current_folder_file 本身就是该 widget 的
+        # 真实导航入口，会重载列表。
         cw.set_current_folder_file(gfile)
         return f'OK chooser(widget): {w.get_title()}'
     return 'ERR: no slot/chooser-widget found inside'
@@ -228,15 +251,36 @@ def _jump(path):
         return f'ERR: {type(e).__name__}: {e}'
 
 
+def _grid_children(slot):
+    """统计 slot 视图区已实例化的网格/列表子项数：验证主体区是否真的刷新。"""
+    total = 0
+    for cls in ('GtkGridView', 'GtkColumnView'):
+        v = _find_first(slot, cls)
+        if v is None:
+            continue
+        try:
+            c = v.get_first_child()
+            while c is not None:
+                total += 1
+                c = c.get_next_sibling()
+        except Exception:
+            pass
+    return total
+
+
 def _debug_list():
-    lines = [f'EXT_VERSION=v5-child-prop']
+    lines = [f'EXT_VERSION=v6-slot-action']
     for w in Gtk.Window.list_toplevels():
         n = _gtype(w)
         lines.append(f'== [{n}] title={w.get_title()!r} active={w.get_property("is-active")}')
         if n == 'NautilusWindow':
             try:
                 slot = w.get_property('active-slot')
+                loc = slot.get_property('location')
                 lines.append(f'  slot.title={slot.get_property("title")!r}')
+                lines.append(f'  slot.location={loc.get_path() if loc else None!r}')
+                lines.append(f'  slot.allow_stop={slot.get_property("allow-stop")}')
+                lines.append(f'  grid_children={_grid_children(slot)}')
             except Exception as e:
                 lines.append(f'  slot ERR: {type(e).__name__}')
             continue

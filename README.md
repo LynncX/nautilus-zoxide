@@ -4,7 +4,7 @@
 
 ## 原理
 
-- `zoxide_jump.py`（nautilus python 扩展）：持有 DBus 名 `dev.lynncx.zoxidejump`，收到 `JumpTo(path)` 后找到最近聚焦的 `NautilusWindow`，对其 `active-slot` 的 `location` 属性（GFile）赋值触发原地导航。nautilus 50.2.2 实测有效
+- `zoxide_jump.py`（nautilus python 扩展）：持有 DBus 名 `dev.lynncx.zoxidejump`，收到 `JumpTo(path)` 后找到最近聚焦的 `NautilusWindow`，对其 `active-slot` 激活 slot 自带的 `slot.open-location` GAction（URI 参数），走完整导航管线（重载视图+压前进/后退历史）。nautilus 50.2.2 实测有效
 - `nautilus-zoxide-toggle`：`zoxide query -l` 喂给 rofi（fuzzy 匹配 + fzf 排序）；选中有窗口 → DBus 原地跳转 + niri 聚焦；无窗口 → 直接 `nautilus <dir>`
 - 扩展与脚本全部安装到用户空间（`~/.local/share/nautilus-python/extensions/`、`~/bin/shortcuts/`），唯一系统级依赖是 apt 包 `python3-nautilus`（~300KB，`apt purge` 可完全清除）
 
@@ -38,8 +38,9 @@
 ## 维护踩坑记录（改代码前必读）
 
 导航机制（两条，均已实证）：
-- 普通浏览窗口：`window.active-slot`（NautilusWindowSlot，注意它继承 **AdwBin**）的 `location` 属性（GFile）赋值即原地导航
-- portal 选择器（NautilusFileChooser，GNOME 50 起由 nautilus 进程承载浏览器等应用的"选择文件"弹窗）：slot 经 `NautilusSidebar` / `NautilusToolbar` 的 `window-slot` 属性可达（模板 bind 到 slot_container.child）；源码 `nautilus_file_chooser.c` 的 constructed() 实证 `adw_bin_set_child(slot_container, slot)`
+- 普通浏览窗口：对 `window.active-slot`（NautilusWindowSlot，注意它继承 **AdwBin**）激活 `slot.open-location` GAction——action group 由 nautilus_window_slot_init 以 "slot" 前缀插在 slot widget 上，参数为 URI 字符串；handler 调 `nautilus_window_slot_open_location_full` → `begin_location_change`，重载视图、压前进/后退历史、同步路径栏
+- 陷阱：slot 的 `location` 属性 setter（`nautilus_window_slot_set_location`）只更新标题/历史按钮状态，**不重载视图**——曾导致"导航栏变了主体区不动"的 bug；且 open-location handler 对新旧地址相同会 early-return，绝不能先赋 `location` 属性再激活 action（那样一次导航都不会发生）
+- portal 选择器（NautilusFileChooser，GNOME 50 起由 nautilus 进程承载浏览器等应用的"选择文件"弹窗）：内嵌的就是真 NautilusWindowSlot（`nautilus_file_chooser.c:743` `nautilus_window_slot_new`），slot 经 `NautilusSidebar` / `NautilusToolbar` 的 `window-slot` 属性可达（模板 bind 到 slot_container.child）；与浏览窗口共用同一 action 导航
 
 遍历器（zoxide_jump.py 的 `_descendants`）三条铁律：
 - 必须用 `get_first_child()`/`get_next_sibling()` 兄弟链遍历。`AdwWindow.get_child()` 返回的是内部 AdwDialogHost 空壳，真实内容挂在 `content` 属性；AdwOverlaySplitView 分 sidebar/content 两支；自定义模板类（NautilusShortcutManager 等）只注册属性、未必实现 get_child vfunc——方法、属性、兄弟链三种手段缺一不可，代码里三者都要保留
