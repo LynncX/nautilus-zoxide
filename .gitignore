@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Local agent tooling (skill manager + workspace notes, not project source)
+.claude/
+.agents/
+.workbuddy/
+skills-lock.json
+
+# Render / build scratch
+*.tmp
+*.bak
+*.orig

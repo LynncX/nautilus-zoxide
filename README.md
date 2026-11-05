@@ -1,5 +1,10 @@
 # nautilus-zoxide-jump
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/nautilus-zoxide-logo-dark.png">
+  <img src="brand/nautilus-zoxide-logo.png" alt="nautilus-zoxide" width="420">
+</picture>
+
 把终端 `z` / yazi `Z→fzf` 的肌肉记忆带进 nautilus：**Mod+Z → rofi 模糊搜索 zoxide 目录 → 当前窗口原地跳转**（不开新标签、不开新窗口）。无窗口时则在目标目录直接启动 nautilus。
 
 ## 原理
@@ -7,6 +12,17 @@
 - `zoxide_jump.py`（nautilus python 扩展）：持有 DBus 名 `dev.lynncx.zoxidejump`，收到 `JumpTo(path)` 后找到最近聚焦的 `NautilusWindow`，对其 `active-slot` 激活 slot 自带的 `slot.open-location` GAction（URI 参数），走完整导航管线（重载视图+压前进/后退历史）。nautilus 50.2.2 实测有效
 - `nautilus-zoxide-toggle`：`zoxide query -l` 喂给 rofi（fuzzy 匹配 + fzf 排序）；选中有窗口 → DBus 原地跳转 + niri 聚焦；无窗口 → 直接 `nautilus <dir>`
 - 扩展与脚本全部安装到用户空间（`~/.local/share/nautilus-python/extensions/`、`~/bin/shortcuts/`），唯一系统级依赖是 apt 包 `python3-nautilus`（~300KB，`apt purge` 可完全清除）
+
+## 架构
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/nautilus-zoxide-stack-dark.png">
+  <img src="brand/nautilus-zoxide-stack.png" alt="Mod+Z 跳转链路：niri 快捷键 → zoxide-toggle → zoxide / rofi → D-Bus → nautilus-python 扩展 → 当前窗口原地跳转" width="1000">
+</picture>
+
+实线为运行时调用链，虚线为安装 / 降级路径。
+
+[交互式架构图（可切换明暗）](brand/nautilus-zoxide-stack.html) · [品牌标识规范](brand/preview.html)
 
 ## 安装
 
@@ -53,3 +69,10 @@
 - portal 自测免打扰：`gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop --method org.freedesktop.portal.FileChooser.OpenFile '' test '{"directory": <true>}'` 可自行唤起与浏览器完全一致的选择器窗口，不必每次手动到浏览器里触发
 - nautilus 源码是最快的真相来源：从镜像 pool 直接下载 orig tar（如 `nautilus_50.2.2.orig.tar.xz`），重点读 `src/nautilus-file-chooser.c` 与 `src/resources/ui/nautilus-file-chooser.blp`；编译期 UI 字符串也可 `strings /usr/bin/nautilus` 与 `gresource list` 快速获取
 - GType 名是精确匹配不是前缀：目标窗口过滤 `NautilusFileChooser` 时注意 NautilusWindowSlot 也含 "NautilusWindow" 字样，用 `in` 判断时先想清楚层级
+
+## 仓库内的图片资源
+
+- `brand/nautilus-zoxide-mark.svg`、`brand/nautilus-zoxide-logo.svg` / `-dark.svg`：标识源文件，纯矢量（字标已转轮廓，不依赖字体）
+- `brand/nautilus-zoxide-logo.png` / `-dark.png`：README 标题图浅色 / 深色两版
+- `brand/nautilus-zoxide-stack.png` / `-dark.png`：架构图浅色 / 深色两版；`brand/nautilus-zoxide-stack.html` 是可离线打开、可切换明暗的交互版，由 [stack-diagram](https://github.com/caru-ini/stack-diagram) 生成
+- `brand/preview.html`：品牌规范页，内联了单色、堆叠、各尺寸等全套变体
